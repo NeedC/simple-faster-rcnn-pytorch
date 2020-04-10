@@ -82,7 +82,7 @@ class VOCBboxDataset:
         self.return_difficult = return_difficult
         self.label_names = VOC_BBOX_LABEL_NAMES
 
-    def __len__(self):
+    def __len__(self): #得到数据集数量
         return len(self.ids)
 
     def get_example(self, i):
@@ -118,6 +118,8 @@ class VOCBboxDataset:
                 for tag in ('ymin', 'xmin', 'ymax', 'xmax')])
             name = obj.find('name').text.lower().strip()
             label.append(VOC_BBOX_LABEL_NAMES.index(name))
+        #bbox是gt_box坐标(ymin, xmin, ymax, xmax),shape=(k,4)
+        #label是类别的下标VOC_BBOX_LABEL_NAMES(0-x),shape=k
         bbox = np.stack(bbox).astype(np.float32)
         label = np.stack(label).astype(np.int32)
         # When `use_difficult==False`, all elements in `difficult` are False.
@@ -134,7 +136,7 @@ class VOCBboxDataset:
     __getitem__ = get_example
 
 
-VOC_BBOX_LABEL_NAMES = (
+VOC_BBOX_LABEL_NAMES = ( #分类类别
     'aeroplane',
     'bicycle',
     'bird',

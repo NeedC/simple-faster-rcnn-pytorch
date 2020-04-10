@@ -13,7 +13,7 @@ from utils.vis_tool import Visualizer
 from utils.config import opt
 from torchnet.meter import ConfusionMeter, AverageValueMeter
 
-LossTuple = namedtuple('LossTuple',
+LossTuple = namedtuple('LossTuple', #类似c的结构体，保存个batch训练的loss
                        ['rpn_loc_loss',
                         'rpn_cls_loss',
                         'roi_loc_loss',
@@ -22,7 +22,7 @@ LossTuple = namedtuple('LossTuple',
                         ])
 
 
-class FasterRCNNTrainer(nn.Module):
+class FasterRCNNTrainer(nn.Module): #定义训练器类
     """wrapper for conveniently training. return losses
 
     The losses include:
@@ -42,27 +42,27 @@ class FasterRCNNTrainer(nn.Module):
     def __init__(self, faster_rcnn):
         super(FasterRCNNTrainer, self).__init__()
 
-        self.faster_rcnn = faster_rcnn
-        self.rpn_sigma = opt.rpn_sigma
-        self.roi_sigma = opt.roi_sigma
+        self.faster_rcnn = faster_rcnn #训练的网络
+        self.rpn_sigma = opt.rpn_sigma #计算rpn_loc_loss的超参数
+        self.roi_sigma = opt.roi_sigma #计算roi_loc_loss的超参数
 
         # target creator create gt_bbox gt_label etc as training targets. 
-        self.anchor_target_creator = AnchorTargetCreator()
-        self.proposal_target_creator = ProposalTargetCreator()
+        self.anchor_target_creator = AnchorTargetCreator() #rpn处使用的，实例化anchor和gt匹配函数
+        self.proposal_target_creator = ProposalTargetCreator() #roi处使用的，实例化提取roi正负样本函数
 
-        self.loc_normalize_mean = faster_rcnn.loc_normalize_mean
-        self.loc_normalize_std = faster_rcnn.loc_normalize_std
+        self.loc_normalize_mean = faster_rcnn.loc_normalize_mean #用于坐标归一化的mean
+        self.loc_normalize_std = faster_rcnn.loc_normalize_std #用于坐标归一化的std
 
-        self.optimizer = self.faster_rcnn.get_optimizer()
+        self.optimizer = self.faster_rcnn.get_optimizer() #实例化得到optimizer函数
         # visdom wrapper
-        self.vis = Visualizer(env=opt.env)
+        self.vis = Visualizer(env=opt.env) #可视化内容，（跳过）
 
         # indicators for training status
-        self.rpn_cm = ConfusionMeter(2)
-        self.roi_cm = ConfusionMeter(21)
-        self.meters = {k: AverageValueMeter() for k in LossTuple._fields}  # average loss
+        self.rpn_cm = ConfusionMeter(2) #可视化内容，（跳过）
+        self.roi_cm = ConfusionMeter(21) #可视化内容，（跳过）
+        self.meters = {k: AverageValueMeter() for k in LossTuple._fields}  # average loss，可视化内容，（跳过）
 
-    def forward(self, imgs, bboxes, labels, scale):
+    def forward(self, imgs, bboxes, labels, scale): #前向函数
         """Forward Faster R-CNN and calculate losses.
 
         Here are notations used.
@@ -87,16 +87,15 @@ class FasterRCNNTrainer(nn.Module):
         Returns:
             namedtuple of 5 losses
         """
+        #n = batch_size,bboxes.shape = (N,k)
         n = bboxes.shape[0]
+        #只支持batch_size=1的训练
         if n != 1:
             raise ValueError('Currently only batch size 1 is supported.')
-
-        _, _, H, W = imgs.shape
+        _, _, H, W = imgs.shape #img.shape=(N,C,H,W)
         img_size = (H, W)
-
-        features = self.faster_rcnn.extractor(imgs)
-
-        rpn_locs, rpn_scores, rois, roi_indices, anchor = \
+        features = self.faster_rcnn.extractor(imgs) #特征提取部分,vgg的conv5_3输出的下采样为16,输出为(N,C,H/16,W/16)
+        rpn_locs, rpn_scores, rois, roi_indices, anchor = \ #rpn部分
             self.faster_rcnn.rpn(features, img_size, scale)
 
         # Since batch size is one, convert variables to singular form
@@ -109,26 +108,28 @@ class FasterRCNNTrainer(nn.Module):
         # Sample RoIs and forward
         # it's fine to break the computation graph of rois, 
         # consider them as constant input
-        sample_roi, gt_roi_loc, gt_roi_label = self.proposal_target_creator(
+        sample_roi, gt_roi_loc, gt_roi_label = self.proposal_target_creator( #提取正负样本个数,默认总共128个
             roi,
             at.tonumpy(bbox),
             at.tonumpy(label),
             self.loc_normalize_mean,
             self.loc_normalize_std)
         # NOTE it's all zero because now it only support for batch=1 now
-        sample_roi_index = t.zeros(len(sample_roi))
-        roi_cls_loc, roi_score = self.faster_rcnn.head(
+        sample_roi_index = t.zeros(len(sample_roi)) #因为batch_size=1,所以128个rois对应的图片下标都是第一个(下标0)
+        roi_cls_loc, roi_score = self.faster_rcnn.head( #roi pooling+全连接部分
             features,
             sample_roi,
             sample_roi_index)
 
         # ------------------ RPN losses -------------------#
-        gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(
+        #Assign ground truth supervision to sampled subset of anchors.
+        gt_rpn_loc, gt_rpn_label = self.anchor_target_creator( #anchor和gt匹配得到用于loss计算的gt
             at.tonumpy(bbox),
             anchor,
             img_size)
         gt_rpn_label = at.totensor(gt_rpn_label).long()
         gt_rpn_loc = at.totensor(gt_rpn_loc)
+        #用gt的坐标、label和预测框的坐标来计算rpn_loc_loss,label用于前景背景，坐标用于
         rpn_loc_loss = _fast_rcnn_loc_loss(
             rpn_loc,
             gt_rpn_loc,
@@ -136,43 +137,47 @@ class FasterRCNNTrainer(nn.Module):
             self.rpn_sigma)
 
         # NOTE: default value of ignore_index is -100 ...
+        #用gt的label和预测框的坐标来计算rpn_cls_loss
         rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label.cuda(), ignore_index=-1)
+        
+        #可视化内容，（跳过）
         _gt_rpn_label = gt_rpn_label[gt_rpn_label > -1]
         _rpn_score = at.tonumpy(rpn_score)[at.tonumpy(gt_rpn_label) > -1]
         self.rpn_cm.add(at.totensor(_rpn_score, False), _gt_rpn_label.data.long())
 
         # ------------------ ROI losses (fast rcnn loss) -------------------#
-        n_sample = roi_cls_loc.shape[0]
-        roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
-        roi_loc = roi_cls_loc[t.arange(0, n_sample).long().cuda(), \
+        n_sample = roi_cls_loc.shape[0] #正负样本筛选后数量，默认128
+        roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4) #roi_cls_loc.shape=(n_sample, num_class*4)
+        roi_loc = roi_cls_loc[t.arange(0, n_sample).long().cuda(), \ #选取每个roi对应的class_loc进行训练
                               at.totensor(gt_roi_label).long()]
+                              
         gt_roi_label = at.totensor(gt_roi_label).long()
         gt_roi_loc = at.totensor(gt_roi_loc)
 
-        roi_loc_loss = _fast_rcnn_loc_loss(
+        roi_loc_loss = _fast_rcnn_loc_loss( #用roi_loc和匹配正负样本的gt_loc计算loss
             roi_loc.contiguous(),
             gt_roi_loc,
             gt_roi_label.data,
             self.roi_sigma)
 
-        roi_cls_loss = nn.CrossEntropyLoss()(roi_score, gt_roi_label.cuda())
+        roi_cls_loss = nn.CrossEntropyLoss()(roi_score, gt_roi_label.cuda()) #用roi_score和匹配正负样本的gt_roi_label计算loss
 
-        self.roi_cm.add(at.totensor(roi_score, False), gt_roi_label.data.long())
+        self.roi_cm.add(at.totensor(roi_score, False), gt_roi_label.data.long()) #可视化内容，（跳过）
 
-        losses = [rpn_loc_loss, rpn_cls_loss, roi_loc_loss, roi_cls_loss]
-        losses = losses + [sum(losses)]
+        losses = [rpn_loc_loss, rpn_cls_loss, roi_loc_loss, roi_cls_loss] #保存4个loss
+        losses = losses + [sum(losses)] #保存总和loss
 
-        return LossTuple(*losses)
+        return LossTuple(*losses) #返回5个loss
 
     def train_step(self, imgs, bboxes, labels, scale):
-        self.optimizer.zero_grad()
-        losses = self.forward(imgs, bboxes, labels, scale)
-        losses.total_loss.backward()
-        self.optimizer.step()
-        self.update_meters(losses)
+        self.optimizer.zero_grad() #梯度清零用于反向传播
+        losses = self.forward(imgs, bboxes, labels, scale) #计算loss
+        losses.total_loss.backward() #反向传播
+        self.optimizer.step() #更新梯度
+        self.update_meters(losses) #可视化内容，（跳过）
         return losses
 
-    def save(self, save_optimizer=False, save_path=None, **kwargs):
+    def save(self, save_optimizer=False, save_path=None, **kwargs): #模型保存函数
         """serialize models include optimizer and other info
         return path where the model-file is stored.
 
@@ -208,7 +213,7 @@ class FasterRCNNTrainer(nn.Module):
         self.vis.save([self.vis.env])
         return save_path
 
-    def load(self, path, load_optimizer=True, parse_opt=False, ):
+    def load(self, path, load_optimizer=True, parse_opt=False, ): #模型加载函数
         state_dict = t.load(path)
         if 'model' in state_dict:
             self.faster_rcnn.load_state_dict(state_dict['model'])
@@ -221,12 +226,12 @@ class FasterRCNNTrainer(nn.Module):
             self.optimizer.load_state_dict(state_dict['optimizer'])
         return self
 
-    def update_meters(self, losses):
+    def update_meters(self, losses): #可视化内容，（跳过）
         loss_d = {k: at.scalar(v) for k, v in losses._asdict().items()}
         for key, meter in self.meters.items():
             meter.add(loss_d[key])
 
-    def reset_meters(self):
+    def reset_meters(self): #可视化内容，（跳过）
         for key, meter in self.meters.items():
             meter.reset()
         self.roi_cm.reset()

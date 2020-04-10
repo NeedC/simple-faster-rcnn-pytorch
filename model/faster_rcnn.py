@@ -13,13 +13,13 @@ from torch.nn import functional as F
 from utils.config import opt
 
 
-def nograd(f):
+def nograd(f): #不计算梯度函数
     def new_f(*args,**kwargs):
         with t.no_grad():
            return f(*args,**kwargs)
     return new_f
 
-class FasterRCNN(nn.Module):
+class FasterRCNN(nn.Module): #定义FasterRCNN架构类
     """Base class for Faster R-CNN.
 
     This is a base class for Faster R-CNN links supporting object detection
@@ -73,14 +73,14 @@ class FasterRCNN(nn.Module):
                 loc_normalize_std = (0.1, 0.1, 0.2, 0.2)
     ):
         super(FasterRCNN, self).__init__()
-        self.extractor = extractor
-        self.rpn = rpn
-        self.head = head
+        self.extractor = extractor #特征提取网络
+        self.rpn = rpn #rpn网络
+        self.head = head #roi pooling + 全连接层网络
 
         # mean and std
-        self.loc_normalize_mean = loc_normalize_mean
-        self.loc_normalize_std = loc_normalize_std
-        self.use_preset('evaluate')
+        self.loc_normalize_mean = loc_normalize_mean #坐标归一化参数
+        self.loc_normalize_std = loc_normalize_std #坐标归一化参数
+        self.use_preset('evaluate') #可视化内容，（跳过）
 
     @property
     def n_class(self):
@@ -124,16 +124,16 @@ class FasterRCNN(nn.Module):
                 :math:`(R',)`.
 
         """
-        img_size = x.shape[2:]
+        img_size = x.shape[2:] #得到图片尺寸(H,W)
 
-        h = self.extractor(x)
-        rpn_locs, rpn_scores, rois, roi_indices, anchor = \
+        h = self.extractor(x) #特征提取
+        rpn_locs, rpn_scores, rois, roi_indices, anchor = \ #rpn网络，得到rpn的两个输出，rois，roi_indices，以及anchor。两个输出和anchor可用于训练
             self.rpn(h, img_size, scale)
-        roi_cls_locs, roi_scores = self.head(
+        roi_cls_locs, roi_scores = self.head( # roi pooling + 全连接层网络，输入特征提取的feature map和rpn网络输出的rois,rois_indices
             h, rois, roi_indices)
         return roi_cls_locs, roi_scores, rois, roi_indices
 
-    def use_preset(self, preset):
+    def use_preset(self, preset): #预设超参数
         """Use the given preset during prediction.
 
         This method changes values of :obj:`self.nms_thresh` and
@@ -160,31 +160,31 @@ class FasterRCNN(nn.Module):
         else:
             raise ValueError('preset must be visualize or evaluate')
 
-    def _suppress(self, raw_cls_bbox, raw_prob):
-        bbox = list()
-        label = list()
-        score = list()
+    def _suppress(self, raw_cls_bbox, raw_prob): #抑制输出(预测时使用)
+        bbox = list() #最终的输出框
+        label = list() #最终的输出label
+        score = list() #最终的输出分数
         # skip cls_id = 0 because it is the background class
-        for l in range(1, self.n_class):
-            cls_bbox_l = raw_cls_bbox.reshape((-1, self.n_class, 4))[:, l, :]
-            prob_l = raw_prob[:, l]
-            mask = prob_l > self.score_thresh
-            cls_bbox_l = cls_bbox_l[mask]
-            prob_l = prob_l[mask]
-            keep = non_maximum_suppression(
+        for l in range(1, self.n_class): #忽略cls_id=0，因为是背景类。以类别为单位
+            cls_bbox_l = raw_cls_bbox.reshape((-1, self.n_class, 4))[:, l, :] #该类别的bbox
+            prob_l = raw_prob[:, l] #该类别概率
+            mask = prob_l > self.score_thresh #第一轮筛选，得到分数大于阈值的索引
+            cls_bbox_l = cls_bbox_l[mask] #得到需要的该类别的框
+            prob_l = prob_l[mask] #得到需要的该类别概率
+            keep = non_maximum_suppression( #第二轮筛选，非极大抑制，输入该类别的框和该类别概率
                 cp.array(cls_bbox_l), self.nms_thresh, prob_l)
-            keep = cp.asnumpy(keep)
-            bbox.append(cls_bbox_l[keep])
+            keep = cp.asnumpy(keep) #得到需要的索引
+            bbox.append(cls_bbox_l[keep]) #两轮筛选后的框
             # The labels are in [0, self.n_class - 2].
-            label.append((l - 1) * np.ones((len(keep),)))
-            score.append(prob_l[keep])
-        bbox = np.concatenate(bbox, axis=0).astype(np.float32)
-        label = np.concatenate(label, axis=0).astype(np.int32)
-        score = np.concatenate(score, axis=0).astype(np.float32)
+            label.append((l - 1) * np.ones((len(keep),)))#label在[0,self.n_class - 2]为了对应索引,考虑背景和物理下标则减2
+            score.append(prob_l[keep]) #两类筛选后的类别概率
+        bbox = np.concatenate(bbox, axis=0).astype(np.float32) #最终的输出框
+        label = np.concatenate(label, axis=0).astype(np.int32) #最终的输出label
+        score = np.concatenate(score, axis=0).astype(np.float32) #最终的输出分数
         return bbox, label, score
 
     @nograd
-    def predict(self, imgs,sizes=None,visualize=False):
+    def predict(self, imgs,sizes=None,visualize=False): #预测函数
         """Detect objects from images.
 
         This method predicts objects for each image.
@@ -212,8 +212,8 @@ class FasterRCNN(nn.Module):
                Each value indicates how confident the prediction is.
 
         """
-        self.eval()
-        if visualize:
+        self.eval() #网络设置为eval模式(禁用BatchNorm和Dropout)
+        if visualize: #可视化内容，（跳过）
             self.use_preset('visualize')
             prepared_imgs = list()
             sizes = list()
@@ -224,17 +224,17 @@ class FasterRCNN(nn.Module):
                 sizes.append(size)
         else:
              prepared_imgs = imgs 
-        bboxes = list()
-        labels = list()
-        scores = list()
-        for img, size in zip(prepared_imgs, sizes):
-            img = at.totensor(img[None]).float()
-            scale = img.shape[3] / size[1]
-            roi_cls_loc, roi_scores, rois, _ = self(img, scale=scale)
+        bboxes = list() #最终的输出框
+        labels = list() #最终的输出label
+        scores = list() #最终的输出分数
+        for img, size in zip(prepared_imgs, sizes): 
+            img = at.totensor(img[None]).float() #增加batch维
+            scale = img.shape[3] / size[1] #获得scale（待定）
+            roi_cls_loc, roi_scores, rois, _ = self(img, scale=scale) #前向
             # We are assuming that batch size is 1.
             roi_score = roi_scores.data
             roi_cls_loc = roi_cls_loc.data
-            roi = at.totensor(rois) / scale
+            roi = at.totensor(rois) / scale #把rois变回原图尺寸（待定）
 
             # Convert predictions to bounding boxes in image coordinates.
             # Bounding boxes are scaled to the scale of the input images.
@@ -242,33 +242,38 @@ class FasterRCNN(nn.Module):
                 repeat(self.n_class)[None]
             std = t.Tensor(self.loc_normalize_std).cuda(). \
                 repeat(self.n_class)[None]
-
-            roi_cls_loc = (roi_cls_loc * std + mean)
+            #Q:看网上说ProposalCreator坐标归一化了所以这里要返回原图，但是我没看到。疑问
+            #A:我觉得"ProposalCreator坐标归一化了"这个有错误，这里要反归一化是因为训练的时候使用的loc归一化了(ProposalTargetCreator)，所以预测结果loc是归一化后的，并不是ProposalCreator时候归一化了
+            roi_cls_loc = (roi_cls_loc * std + mean) #坐标反归一化
             roi_cls_loc = roi_cls_loc.view(-1, self.n_class, 4)
-            roi = roi.view(-1, 1, 4).expand_as(roi_cls_loc)
+            roi = roi.view(-1, 1, 4).expand_as(roi_cls_loc) #一个框对应n_class个loc，所以要expand_as到同维度后面可以二次修正框
+            
+            #二次修正框得到最后框
             cls_bbox = loc2bbox(at.tonumpy(roi).reshape((-1, 4)),
                                 at.tonumpy(roi_cls_loc).reshape((-1, 4)))
             cls_bbox = at.totensor(cls_bbox)
             cls_bbox = cls_bbox.view(-1, self.n_class * 4)
             # clip bounding box
-            cls_bbox[:, 0::2] = (cls_bbox[:, 0::2]).clamp(min=0, max=size[0])
-            cls_bbox[:, 1::2] = (cls_bbox[:, 1::2]).clamp(min=0, max=size[1])
-
+            cls_bbox[:, 0::2] = (cls_bbox[:, 0::2]).clamp(min=0, max=size[0]) #限制超出尺寸的框
+            cls_bbox[:, 1::2] = (cls_bbox[:, 1::2]).clamp(min=0, max=size[1]) #限制超出尺寸的框
+            #softmax得到每个框的类别概率
             prob = at.tonumpy(F.softmax(at.totensor(roi_score), dim=1))
 
             raw_cls_bbox = at.tonumpy(cls_bbox)
             raw_prob = at.tonumpy(prob)
-
+            #输入框以及对应的类别概率，抑制输出
             bbox, label, score = self._suppress(raw_cls_bbox, raw_prob)
+            
+            #输出坐标，类别，该类别概率
             bboxes.append(bbox)
             labels.append(label)
             scores.append(score)
 
-        self.use_preset('evaluate')
-        self.train()
+        self.use_preset('evaluate') #可视化内容，（跳过）
+        self.train() #返回train模式
         return bboxes, labels, scores
 
-    def get_optimizer(self):
+    def get_optimizer(self): #得到optimizer函数
         """
         return optimizer, It could be overwriten if you want to specify 
         special optimizer
@@ -287,7 +292,7 @@ class FasterRCNN(nn.Module):
             self.optimizer = t.optim.SGD(params, momentum=0.9)
         return self.optimizer
 
-    def scale_lr(self, decay=0.1):
+    def scale_lr(self, decay=0.1): #衰减学习率函数
         for param_group in self.optimizer.param_groups:
             param_group['lr'] *= decay
         return self.optimizer

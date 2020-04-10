@@ -24,9 +24,9 @@ def read_image(path, dtype=np.float32, color=True):
 
     f = Image.open(path)
     try:
-        if color:
+        if color: #color=True转为RGB
             img = f.convert('RGB')
-        else:
+        else: #color=False转为灰度图
             img = f.convert('P')
         img = np.asarray(img, dtype=dtype)
     finally:
@@ -101,13 +101,13 @@ def flip_bbox(bbox, size, y_flip=False, x_flip=False):
     """
     H, W = size
     bbox = bbox.copy()
-    if y_flip:
-        y_max = H - bbox[:, 0]
-        y_min = H - bbox[:, 2]
+    if y_flip: #垂直翻转的bbox
+        y_max = H - bbox[:, 0] #y_max = H - bbox[:,0](y_min)
+        y_min = H - bbox[:, 2] #y_min = H - bbox[:,2](y_max)
         bbox[:, 0] = y_min
         bbox[:, 2] = y_max
-    if x_flip:
-        x_max = W - bbox[:, 1]
+    if x_flip: #水平翻转的bbox
+        x_max = W - bbox[:, 1] #同上
         x_min = W - bbox[:, 3]
         bbox[:, 1] = x_min
         bbox[:, 3] = x_max

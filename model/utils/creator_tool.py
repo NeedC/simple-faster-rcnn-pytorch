@@ -4,8 +4,8 @@ import cupy as cp
 from model.utils.bbox_tools import bbox2loc, bbox_iou, loc2bbox
 from model.utils.nms import non_maximum_suppression
 
-
-class ProposalTargetCreator(object):
+#Q：问题有点多，这部分后面填坑
+class ProposalTargetCreator(object): #roi处使用，roi和gt匹配得出正负样本的函数
     """Assign ground truth bounding boxes to given RoIs.
 
     The :meth:`__call__` of this class generates training targets
@@ -93,8 +93,8 @@ class ProposalTargetCreator(object):
 
         roi = np.concatenate((roi, bbox), axis=0)
 
-        pos_roi_per_image = np.round(self.n_sample * self.pos_ratio)
-        iou = bbox_iou(roi, bbox)
+        pos_roi_per_image = np.round(self.n_sample * self.pos_ratio) #正样本个数,128*0.25
+        iou = bbox_iou(roi, bbox) #获得shape=(N,K),N为roi个数,K为bbox个数
         gt_assignment = iou.argmax(axis=1)
         max_iou = iou.max(axis=1)
         # Offset range of classes from [0, n_fg_class - 1] to [1, n_fg_class].
@@ -121,19 +121,19 @@ class ProposalTargetCreator(object):
 
         # The indices that we're selecting (both positive and negative).
         keep_index = np.append(pos_index, neg_index)
-        gt_roi_label = gt_roi_label[keep_index]
+        gt_roi_label = gt_roi_label[keep_index] #正样本下标[0,pos_index],负样本下标[pos_index,-1]
         gt_roi_label[pos_roi_per_this_image:] = 0  # negative labels --> 0
-        sample_roi = roi[keep_index]
+        sample_roi = roi[keep_index] #正负样本一共n_sample=128个
 
         # Compute offsets and scales to match sampled RoIs to the GTs.
-        gt_roi_loc = bbox2loc(sample_roi, bbox[gt_assignment[keep_index]])
+        gt_roi_loc = bbox2loc(sample_roi, bbox[gt_assignment[keep_index]]) # 获得roi和GT的偏移值
         gt_roi_loc = ((gt_roi_loc - np.array(loc_normalize_mean, np.float32)
-                       ) / np.array(loc_normalize_std, np.float32))
+                       ) / np.array(loc_normalize_std, np.float32)) #Q:为什么要归一化？#A:偏移值计算公式
 
         return sample_roi, gt_roi_loc, gt_roi_label
 
-
-class AnchorTargetCreator(object):
+#Q：问题有点多，这部分后面填坑
+class AnchorTargetCreator(object): #rpn处使用，anchor和gt匹配得到正负样本的函数
     """Assign the ground truth bounding boxes to anchors.
 
     Assigns the ground truth bounding boxes to anchors for training Region
@@ -288,7 +288,7 @@ def _get_inside_index(anchor, H, W):
     return index_inside
 
 
-class ProposalCreator:
+class ProposalCreator: #创建roi的函数
     # unNOTE: I'll make it undifferential
     # unTODO: make sure it's ok
     # It's ok
@@ -384,7 +384,7 @@ class ProposalCreator:
         # NOTE: when test, remember
         # faster_rcnn.eval()
         # to set self.traing = False
-        if self.parent_model.training:
+        if self.parent_model.training: #设置超参数
             n_pre_nms = self.n_train_pre_nms
             n_post_nms = self.n_train_post_nms
         else:
@@ -393,38 +393,38 @@ class ProposalCreator:
 
         # Convert anchors into proposal via bbox transformations.
         # roi = loc2bbox(anchor, loc)
-        roi = loc2bbox(anchor, loc)
+        roi = loc2bbox(anchor, loc) #anchor和rpn预测的loc组合出bbox
 
         # Clip predicted boxes to image.
-        roi[:, slice(0, 4, 2)] = np.clip(
+        roi[:, slice(0, 4, 2)] = np.clip( #这两步从高宽限制超出尺寸的roi
             roi[:, slice(0, 4, 2)], 0, img_size[0])
         roi[:, slice(1, 4, 2)] = np.clip(
             roi[:, slice(1, 4, 2)], 0, img_size[1])
 
         # Remove predicted boxes with either height or width < threshold.
-        min_size = self.min_size * scale
-        hs = roi[:, 2] - roi[:, 0]
-        ws = roi[:, 3] - roi[:, 1]
-        keep = np.where((hs >= min_size) & (ws >= min_size))[0]
-        roi = roi[keep, :]
-        score = score[keep]
+        min_size = self.min_size * scale # Q:暂时不明白
+        hs = roi[:, 2] - roi[:, 0] #ymax - ymin = hs
+        ws = roi[:, 3] - roi[:, 1] #xmax - xmin = ws
+        keep = np.where((hs >= min_size) & (ws >= min_size))[0] #第一次筛选，筛选符合高宽条件的框
+        roi = roi[keep, :] #得到第一次筛选的框
+        score = score[keep] #得到框的分数
 
         # Sort all (proposal, score) pairs by score from highest to lowest.
         # Take top pre_nms_topN (e.g. 6000).
-        order = score.ravel().argsort()[::-1]
-        if n_pre_nms > 0:
+        order = score.ravel().argsort()[::-1] #分数从高到低排名
+        if n_pre_nms > 0: #第二次筛选，分数前n_pre_nms个框留下
             order = order[:n_pre_nms]
-        roi = roi[order, :]
+        roi = roi[order, :] #得到第二次筛选框
 
         # Apply nms (e.g. threshold = 0.7).
         # Take after_nms_topN (e.g. 300).
 
         # unNOTE: somthing is wrong here!
         # TODO: remove cuda.to_gpu
-        keep = non_maximum_suppression(
+        keep = non_maximum_suppression( #第三次筛选，超参数nms_thresh非极大抑制减少框数量
             cp.ascontiguousarray(cp.asarray(roi)),
             thresh=self.nms_thresh)
-        if n_post_nms > 0:
+        if n_post_nms > 0: #第四次筛选，经过非极大抑制留下了的框保留前n_post_nms个。
             keep = keep[:n_post_nms]
-        roi = roi[keep]
+        roi = roi[keep] #得到最后生成的roi
         return roi
